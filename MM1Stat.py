@@ -16,11 +16,11 @@ VERBOSE = False
 POPULATION = 50000000
 SERVICE_DISCIPLINE = 'FIFO'
 
-LAMBDA = 2.000
-MU = 1.900
+LAMBDA = 2.0000
+MU = 3.0000
 RHO = LAMBDA/MU
-BUFFER = 20
-MAXSIMTIME = 1000
+BUFFER = 200
+MAXSIMTIME = 10000
 NUM_REP = 4
 k = 200
 
@@ -56,7 +56,7 @@ class Server:
         self.waitingTime = 0
         self.responseTime = 0
         self.idleTime = 0
-        self.jobsGenerate = 0
+        self.jobsSystem = 0
         self.jobsDone = 0
         
         ''' register a new server process '''
@@ -91,6 +91,7 @@ class Server:
                 self.waitingTime += a
                 self.responseTime += env.now - j.arrtime
                 self.jobsDone += 1
+                self.jobsSystem -= 1
     
 
     def waiting(self, env):
@@ -118,11 +119,11 @@ class JobGenerator:
             '''yield an event for new job arrival'''
             job_interarrival = random.exponential( self.interarrivaltime )
             yield env.timeout( job_interarrival )
-            self.server.jobsGenerate += 1
             if (len(self.server.Jobs) < BUFFER):
                 ''' generate service time and add job to the list'''
                 job_duration = random.exponential( self.servicetime )
                 self.server.Jobs.append( Job(i, env.now, job_duration) )
+                self.server.jobsSystem += 1
                 if VERBOSE:
                     print( 'job %d: t = %.2f, l = %.2f, dt = %.2f'
                         %( i, env.now, job_duration, job_interarrival ) )
@@ -137,11 +138,11 @@ class JobGenerator:
     ''' record queue length every 1 unit time'''
     def loglog(self, env):
         while True:
-            qlog.write('%d\t%d\n' %(env.now, len(self.server.Jobs)))
+            qlog.write('%d\t%d\t%d\n' %(env.now, len(self.server.Jobs), self.server.jobsSystem))
             yield env.timeout(1)
 
 ''' performance metrics '''
-#jobCreate = 0
+#totalJobs = 0
 jobDone = 0
 jobDrop = 0
 serviceTime = 0
@@ -155,9 +156,9 @@ if LOGGED:
         env = simpy.Environment()
         MyJobGenerator = JobGenerator( env, SERVICE_DISCIPLINE, POPULATION, LAMBDA, MU )
         env.run( until = MAXSIMTIME )
-        #jobCreate += MyJobGenerator.server.jobsGenerate 
-        jobDone += MyJobGenerator.server.jobsDone
-        jobDrop += MyJobGenerator.server.jobsDrop
+        #totalJobs += MyJobGenerator.server.jobsSystem / MAXSIMTIME
+        #jobDone += MyJobGenerator.server.jobsDone
+        jobDrop += MyJobGenerator.server.jobsDrop / MAXSIMTIME
         serviceTime += (MyJobGenerator.server.toltalServiceTime / MyJobGenerator.server.jobsDone)
         waitTime += (MyJobGenerator.server.waitingTime / MyJobGenerator.server.jobsDone)
         resTime += (MyJobGenerator.server.responseTime / MyJobGenerator.server.jobsDone)
@@ -166,19 +167,25 @@ if LOGGED:
 
 '''calculate mean across replications'''
 xj = []
+xs = []
 for i in range(MAXSIMTIME):
     xj.append(0.0)
+    xs.append(0.0)
 for i in range(NUM_REP):
     temp = np.loadtxt( 'test%d.csv' %i, delimiter='\t')
     for j in range(MAXSIMTIME):
         xj[j] += temp[j, 1]
+        xs[j] += temp[j, 2]
 for i in range(MAXSIMTIME):
     xj[i] = xj[i] / NUM_REP
+    xs[i] = xs[i] / NUM_REP
 
 '''mean of all mean xj'''
 xmean = 0.000000
+xsystem = 0.0000
 for i in range(MAXSIMTIME):
     xmean += xj[i]
+    xsystem += xs[i]
 xmean = xmean / MAXSIMTIME
 
 '''mean of (n-l) remaing observations and relative change with xmean'''
@@ -257,19 +264,20 @@ n = float(RHO/(1-RHO) - ((BUFFER+1)*RHO**(BUFFER+1))/(1-RHO**(BUFFER+1)))
 nq = float(RHO/(1-RHO) - RHO*(1+BUFFER*RHO**(BUFFER))/(1 - RHO**(BUFFER+1)))
 pb = ((1-RHO)/(1-RHO**(BUFFER+1)))*RHO**(BUFFER)
 er = n/(LAMBDA*(1-pb))
-ew = nq/(LAMBDA*(1-pb))
+ew = er - 1/MU
 
 '''print statistics'''
 print('\n------------ Analytical Calculation ------------')
 print('Mean no. of jobs in the system:           :%.3f' % (n))
 print('Mean no. of jobs in the queue:            :%.3f' % (nq))
+print('Utilization of the server                 :%.3f' % (RHO))
 print('Mean response time:                       :%.3f' % (er))
 print('Mean waiting time:                        :%.3f' % (ew))
 
 print('\n------------ Simulation Calculation ------------')
-print( 'Average number of jobs in the system     : %.3f' % round(log[:,1].mean(),3) )
-print( 'Average number of jobs in the queue      : %.3f' % round(log[:,1].mean()+1,3) )
-print( 'Average number of jobs rejected          : %.3f' % round(jobDrop/NUM_REP,3) )
+print( 'Average mean no. of jobs in the system   : %.3f' % round(xsystem/MAXSIMTIME,3) )
+print( 'Average mean no. jobs in the queue       : %.3f' % round(xmean,3) )
+print( 'Average mean no. of jobs rejected        : %.3f' % round(jobDrop/NUM_REP,3) )
 print( 'Average utilization                      : %.3f' % round(utilization/NUM_REP,3) )
 print( 'Average service time per job             : %.3f' % round(serviceTime/NUM_REP,3) )
 print( 'Average response time per job            : %.3f' % round(resTime/NUM_REP,3) )
