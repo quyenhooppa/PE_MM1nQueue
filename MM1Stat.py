@@ -10,46 +10,64 @@ from kneed import KneeLocator
 ''' ------------------------ '''
 ''' Parameters               '''
 ''' ------------------------ '''
+# Simulation settings
 LOGGED = True
 GRAPH = True
 VERBOSE = False
-POPULATION = 50000000
-SERVICE_DISCIPLINE = 'FIFO'
-
-LAMBDA = 2.0000
-MU = 3.0000
-RHO = LAMBDA/MU
-BUFFER = 200
 MAXSIMTIME = 10000
-NUM_REP = 4
-k = 200
+NUM_REP = 5
 
-''' ------------------------ '''
-''' DES model                '''
-''' ------------------------ '''
+# Define parameters for the single queue M/M/1/n
+LAMBDA = 3.1000
+MU = 3.1000
+BUFFER = 2000000
+RHO = LAMBDA/MU
+
+
+##################################################################
 class Job:
+    """Definition of a Job object in the queuing system
+
+    Args:
+    id (int)        : A unique ID of a job
+    arrtime (int)    : Arrival time of a job
+    duration (int)   : The time that job is served
+
+    Attributes:
+    id (int)        : A unique ID of a job
+    arrtime (int)    : Arrival time of a job
+    duration (int)   : The time that job is served
+
+    """
     def __init__(self, id, arrtime, duration):
         self.id = id
         self.arrtime = arrtime
         self.duration = duration
 
-    def __str__(self):
-        return 'Job %d at %d, length %d' %(self.id, self.arrtime, self.duration)
 
-def SJF( job ):
-    return job.duration
 
-''' A server
- - env: SimPy environment
- - strat: - FIFO: First In First Out
-          - SJF : Shortest Job First
-'''
+##################################################################
 class Server:
-    def __init__(self, env, strat = 'FIFO'):
+    """Definition of a Server object in the queuing system
+
+    Args:
+        env (simpy.core.Environment):SimPy environment
+    Attributes:
+        Jobs (list)                 : A queue of jobs
+        serversleeping (bool)       : A flag to indicate whether the system is at idle mode or not
+        totalServiceTime (int)      : A total time for serving jobs
+        waitingTime (int)           : A total time of jobs for waiting to be served
+        responseTime (int)          : A total time of jobs from arriving to leaving the server
+        idleTime (int)              : A total time that the server is not busy
+        jobsSystem (int)            : Number of jobs in the server
+        jobsDone (int)              : Number of jobs successfully being served
+        jobsDrop (int)              : Number of jobs being rejected by the server 
+
+    """
+
+    def __init__(self, env):
         self.env = env
-        self.strat = strat
         self.Jobs = list(())
-        self.jobsDrop = 0
         self.serversleeping = None
         ''' statistics '''
         self.toltalServiceTime = 0
@@ -58,16 +76,26 @@ class Server:
         self.idleTime = 0
         self.jobsSystem = 0
         self.jobsDone = 0
+        self.jobsDrop = 0
         
         ''' register a new server process '''
         env.process( self.serve() )
 
     def serve(self):
+        """ Server event of queuing system
+
+        The server takes the first job in the queue to serve.
+        When there is no job left in the queue, server will wait until a next job comming.
+
+        Args:
+        env (simpy.core.Environment): SimPy environment
+
+        """
         while True:
-            ''' do nothing, just change server to idle
-              and then yield a wait event which takes infinite time
-            '''
             if len( self.Jobs ) == 0:
+                ''' do nothing, just change server to idle
+                and then yield a wait event which takes infinite time
+                '''
                 self.serversleeping = env.process( self.waiting( self.env ))
                 t1 = self.env.now
                 yield self.serversleeping
@@ -75,11 +103,7 @@ class Server:
                 self.idleTime += self.env.now - t1
             else:
                 ''' get the first job to be served'''
-                if self.strat == 'SJF':
-                    self.Jobs.sort( key = SJF )
-                    j = self.Jobs.pop( 0 )
-                else: # FIFO by default
-                    j = self.Jobs.pop( 0 )
+                j = self.Jobs.pop( 0 )
 
                 ''' sum up the waiting time'''
                 #print('%d: %.2f' % (self.jobsDone + 1, self.env.now - j.arrtime))
@@ -95,6 +119,12 @@ class Server:
     
 
     def waiting(self, env):
+        """ Waiting for a job comming to server
+
+        Args:
+        env (simpy.core.Environment):SimPy environment
+
+        """
         try:
             if VERBOSE:
                 print( 'Server is idle at %.2f' % self.env.now )
@@ -103,13 +133,28 @@ class Server:
             if VERBOSE:
                 print('Server waken up and works at %.2f' % self.env.now )
 
+
+
+##################################################################
 class JobGenerator:
-    def __init__(self, env, strat, nrjobs = 10000000, lam = 2, mu = 1.99999):
-        self.server = Server(env, strat)
+    """JobGenerator creates Job object in the queuing system
+
+    Args:
+        env (simpy.core.Environment)    : SimPy environment
+        lam (float)                       : Arrival rate 
+        mu (float)                        : Service rate
+    Attributes:
+        server (Server)                 : A queue of jobs
+        interarrivaltime (float)          : Mean arrival time between two jobs
+        servicetime (float)               : Mean service time of a job 
+
+    """
+    def __init__(self, env, lam = 2, mu = 1.99999):
+        self.server = Server(env)
         self.env = env
-        self.nrjobs = nrjobs
         self.interarrivaltime = 1/lam
         self.servicetime = 1/mu
+
         env.process( self.generatejobs(env) )
         env.process( self.loglog(env))
 
@@ -141,29 +186,29 @@ class JobGenerator:
             qlog.write('%d\t%d\t%d\n' %(env.now, len(self.server.Jobs), self.server.jobsSystem))
             yield env.timeout(1)
 
+
 ''' performance metrics '''
-#totalJobs = 0
 jobDone = 0
 jobDrop = 0
 serviceTime = 0
 waitTime = 0
 utilization = 0
 resTime = 0
+
 ''' open a log file and save statistics '''
 if LOGGED:
     for i in range(NUM_REP):
         qlog = open ( 'test%d.csv'  % i, 'w' )
         env = simpy.Environment()
-        MyJobGenerator = JobGenerator( env, SERVICE_DISCIPLINE, POPULATION, LAMBDA, MU )
+        MyJobGenerator = JobGenerator( env, LAMBDA, MU )
         env.run( until = MAXSIMTIME )
-        #totalJobs += MyJobGenerator.server.jobsSystem / MAXSIMTIME
-        #jobDone += MyJobGenerator.server.jobsDone
         jobDrop += MyJobGenerator.server.jobsDrop / MAXSIMTIME
         serviceTime += (MyJobGenerator.server.toltalServiceTime / MyJobGenerator.server.jobsDone)
         waitTime += (MyJobGenerator.server.waitingTime / MyJobGenerator.server.jobsDone)
         resTime += (MyJobGenerator.server.responseTime / MyJobGenerator.server.jobsDone)
         utilization += 1.0-MyJobGenerator.server.idleTime/MAXSIMTIME
         qlog.close()
+
 
 '''calculate mean across replications'''
 xj = []
@@ -210,16 +255,6 @@ for i in range (pos, MAXSIMTIME):
 qLenStable = qLenStable / (MAXSIMTIME-pos)
 
 
-# xjmean = np.array([])
-# j = list()
-# for i in range (k, MAXSIMTIME-k-1):
-#     temp = 0
-#     for l1 in range (-k,k+1):
-#         temp += xj[i+l1]
-#     j.append(i)
-#     xjmean = np.append(xjmean, temp / (2*k+1))
-# kn2 = KneeLocator(j, xjmean, curve='concave', direction='increasing')
-
 if GRAPH:
     plt.subplot( 2, 2, 1 )
     plt.title('Queue')
@@ -246,25 +281,15 @@ if GRAPH:
     plt.xlabel( 'l' )
     plt.ylabel( 'change' )
     plt.step( l, relative, where='post', color = 'blue' )
-    # knee1 = argrelextrema(relative, np.greater)
-    # plt.plot( knee1[0][0]-1, relative[knee1[0][0]-1], ".", color = 'red' )
     plt.plot( round(kn1.knee,0), relative[round(kn1.knee,0)], ".", color = "red")
 
-    # plt.subplot( 3, 2, 5 )
-    # plt.title('Moving average')
-    # plt.xlabel( 'j' )
-    # plt.ylabel( 'Mean X$_j$' )
-    # plt.step( j, xjmean, where='post', color = 'purple' )
-    # # knee2 = argrelextrema(xjmean, np.greater)
-    # # plt.plot( j[knee2[0][0]-1], xjmean[knee2[0][0]-1], ".", color = 'red' )
-    # plt.plot( round(kn2.knee,0), xjmean[round(kn2.knee,0)-k], ".", color = "red")
-
-#print('%5.f %d %5.f' % (RHO, BUFFER, RHO**(BUFFER+1)))
-n = float(RHO/(1-RHO) - ((BUFFER+1)*RHO**(BUFFER+1))/(1-RHO**(BUFFER+1)))
-nq = float(RHO/(1-RHO) - RHO*(1+BUFFER*RHO**(BUFFER))/(1 - RHO**(BUFFER+1)))
-pb = ((1-RHO)/(1-RHO**(BUFFER+1)))*RHO**(BUFFER)
-er = n/(LAMBDA*(1-pb))
-ew = er - 1/MU
+print('%5.f %d %5.f' % (RHO, BUFFER, RHO**(BUFFER+1)))
+if RHO != 1:
+    n = float(RHO/(1-RHO) - ((BUFFER+1)*RHO**(BUFFER+1))/(1-RHO**(BUFFER+1)))
+    nq = float(RHO/(1-RHO) - RHO*(1+BUFFER*RHO**(BUFFER))/(1 - RHO**(BUFFER+1)))
+    pb = ((1-RHO)/(1-RHO**(BUFFER+1)))*RHO**(BUFFER)
+    er = n/(LAMBDA*(1-pb))
+    ew = er - 1/MU
 
 '''print statistics'''
 print('\n------------ Analytical Calculation ------------')
@@ -283,8 +308,7 @@ print( 'Average service time per job             : %.3f' % round(serviceTime/NUM
 print( 'Average response time per job            : %.3f' % round(resTime/NUM_REP,3) )
 print( 'Average waiting time per job             : %.3f' % round(waitTime/NUM_REP,3) )
 print( 'Average queue length in stable state     : %.3f '% round(qLenStable,3) )
-print( 'Transient length                         : %d' % round(kn1.knee,0))
-#print( 'Knee of moving average of independent replications  : %d '% round(kn2.knee,0))
+print( 'Transient length                         : %d\n' % round(kn1.knee,0))
 
 if GRAPH:
     plt.tight_layout()
