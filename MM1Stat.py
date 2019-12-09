@@ -1,9 +1,10 @@
 import simpy
 #import random
 import numpy as np
-from scipy.signal import argrelextrema
 import numpy.random as random
 import matplotlib.pyplot as plt
+import scipy.stats as st
+import math
 from matplotlib.font_manager import FontProperties
 from kneed import KneeLocator
 
@@ -11,16 +12,18 @@ from kneed import KneeLocator
 ''' Parameters               '''
 ''' ------------------------ '''
 # Simulation settings
-LOGGED = True
+LOGGED = False
 GRAPH = True
 VERBOSE = False
 MAXSIMTIME = 10000
 NUM_REP = 5
+CI = 0.95
+n0 = 510
 
 # Define parameters for the single queue M/M/1/n
-LAMBDA = 3.1000
-MU = 3.1000
-BUFFER = 2000000
+LAMBDA = 5.1000
+MU = 3.5000
+BUFFER = 800
 RHO = LAMBDA/MU
 
 
@@ -187,13 +190,15 @@ class JobGenerator:
             yield env.timeout(1)
 
 
+##################################################################
+
 ''' performance metrics '''
-jobDone = 0
-jobDrop = 0
+jobDrop = 0 
 serviceTime = 0
 waitTime = 0
 utilization = 0
 resTime = 0
+
 
 ''' open a log file and save statistics '''
 if LOGGED:
@@ -208,8 +213,12 @@ if LOGGED:
         resTime += (MyJobGenerator.server.responseTime / MyJobGenerator.server.jobsDone)
         utilization += 1.0-MyJobGenerator.server.idleTime/MAXSIMTIME
         qlog.close()
+    log = open ( 'sim.csv', 'w' )
+    log.write('%f\t%f\t%f\t%f\t%f\n' % (jobDrop, serviceTime, waitTime, resTime, utilization))
+    log.close()
 
 
+#===================INITIAL DATA DELTION======================#
 '''calculate mean across replications'''
 xj = []
 xs = []
@@ -225,7 +234,7 @@ for i in range(MAXSIMTIME):
     xj[i] = xj[i] / NUM_REP
     xs[i] = xs[i] / NUM_REP
 
-'''mean of all mean xj'''
+'''mean of all xj'''
 xmean = 0.000000
 xsystem = 0.0000
 for i in range(MAXSIMTIME):
@@ -255,6 +264,32 @@ for i in range (pos, MAXSIMTIME):
 qLenStable = qLenStable / (MAXSIMTIME-pos)
 
 
+#===================INDEPENDENT REPLICATIONS======================#
+xi = np.array([])
+for i in range (NUM_REP):
+    temp = np.loadtxt( 'test%d.csv' % i, delimiter='\t')
+    # mean = temp[:,1]
+    mean = 0
+    for j in range (n0+1, MAXSIMTIME):
+        mean += temp[j,1]
+    xi = np.append(xi, mean/(MAXSIMTIME-n0-1))
+
+xMean = xi.mean()
+
+var = 0
+temp = 0
+for i in range (NUM_REP):
+    temp += (xi[i] - xMean)**2
+var = temp / (NUM_REP - 1)
+
+z_scores = 1 - (1 - CI)/2
+z = st.norm.ppf(z_scores)
+
+print(xMean)
+print(var)
+print(z*math.sqrt(var/NUM_REP))
+
+##################################################################
 if GRAPH:
     plt.subplot( 2, 2, 1 )
     plt.title('Queue')
@@ -267,7 +302,7 @@ if GRAPH:
     plt.subplot( 2, 2, 2 )
     plt.title('Mean across replications')
     plt.xlabel( 'Time' )
-    plt.ylabel( 'X$_j$', rotation='90' )
+    plt.ylabel( 'X$_j$' )
     plt.step( log[:,0], xj, where='post', color = 'orange' )
 
     plt.subplot( 2, 2, 3 )
@@ -283,13 +318,23 @@ if GRAPH:
     plt.step( l, relative, where='post', color = 'blue' )
     plt.plot( round(kn1.knee,0), relative[round(kn1.knee,0)], ".", color = "red")
 
-print('%5.f %d %5.f' % (RHO, BUFFER, RHO**(BUFFER+1)))
-if RHO != 1:
-    n = float(RHO/(1-RHO) - ((BUFFER+1)*RHO**(BUFFER+1))/(1-RHO**(BUFFER+1)))
-    nq = float(RHO/(1-RHO) - RHO*(1+BUFFER*RHO**(BUFFER))/(1 - RHO**(BUFFER+1)))
-    pb = ((1-RHO)/(1-RHO**(BUFFER+1)))*RHO**(BUFFER)
-    er = n/(LAMBDA*(1-pb))
-    ew = er - 1/MU
+
+##################################################################
+# print('%5.f %d %5.f' % (RHO, BUFFER, RHO**(BUFFER+1)))
+# if RHO != 1:
+n = float(RHO/(1-RHO) - ((BUFFER+1)*RHO**(BUFFER+1))/(1-RHO**(BUFFER+1)))
+nq = float(RHO/(1-RHO) - RHO*(1+BUFFER*RHO**(BUFFER))/(1 - RHO**(BUFFER+1)))
+temp = ((1-RHO)/(1-RHO**(BUFFER+1)))*RHO**(BUFFER)
+er = n/(LAMBDA*(1-temp))
+ew = er - 1/MU
+
+stats = np.loadtxt( 'sim.csv', delimiter='\t' )
+jobDrop = stats[0]
+serviceTime = stats[1]
+waitTime = stats[2]
+resTime = stats[3]
+utilization = stats[4]
+# print(stats)
 
 '''print statistics'''
 print('\n------------ Analytical Calculation ------------')
